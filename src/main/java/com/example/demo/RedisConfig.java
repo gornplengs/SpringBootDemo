@@ -8,9 +8,15 @@ import org.springframework.boot.autoconfigure.condition.ConditionalOnMissingBean
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 import org.springframework.data.redis.connection.RedisConnectionFactory;
+import org.springframework.data.redis.connection.RedisStandaloneConfiguration;
+import org.springframework.data.redis.connection.jedis.JedisConnectionFactory;
 import org.springframework.data.redis.core.RedisTemplate;
+import org.springframework.data.redis.listener.ChannelTopic;
+import org.springframework.data.redis.serializer.GenericToStringSerializer;
 import org.springframework.data.redis.serializer.Jackson2JsonRedisSerializer;
 import org.springframework.data.redis.serializer.StringRedisSerializer;
+
+import java.util.UUID;
 
 @Configuration
 public class RedisConfig {
@@ -30,11 +36,18 @@ public class RedisConfig {
 
         RedisTemplate<String, Object> template = new RedisTemplate<String, Object>();
         template.setConnectionFactory(redisConnectionFactory);
-        template.setKeySerializer(stringRedisSerializer);
-//        template.setValueSerializer(stringRedisSerializer);
+
+        template.setKeySerializer(new StringRedisSerializer());
         template.setHashKeySerializer(stringRedisSerializer);
-//        template.setHashValueSerializer(stringRedisSerializer);
+        template.setHashValueSerializer(new GenericToStringSerializer<Object>(Object.class));
+        template.setValueSerializer(new GenericToStringSerializer<Object>(Object.class));
+        template.setDefaultSerializer(new StringRedisSerializer());
         template.afterPropertiesSet();
         return template;
+    }
+
+    @Bean
+    ChannelTopic topic() {
+        return new ChannelTopic(UUID.randomUUID().toString());
     }
 }

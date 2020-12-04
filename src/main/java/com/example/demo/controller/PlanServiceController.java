@@ -1,11 +1,9 @@
 package com.example.demo.controller;
 
-import com.example.demo.MyUserDetailsService;
-import com.example.demo.model.AuthenticationRequest;
+import com.example.demo.service.MyUserDetailsService;
 import com.example.demo.model.AuthenticationResponse;
+import com.example.demo.service.RedisService;
 import com.example.demo.util.JwtUtil;
-import com.fasterxml.jackson.core.JsonGenerationException;
-import com.fasterxml.jackson.databind.JsonMappingException;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import org.everit.json.schema.Schema;
 import org.everit.json.schema.ValidationException;
@@ -13,7 +11,7 @@ import org.everit.json.schema.loader.SchemaLoader;
 import org.json.JSONObject;
 import org.json.JSONTokener;
 import org.springframework.beans.factory.annotation.Autowired;
-import org.springframework.data.redis.core.RedisTemplate;
+import org.springframework.http.HttpHeaders;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.security.authentication.AuthenticationManager;
@@ -26,21 +24,25 @@ import java.io.File;
 import java.io.FileInputStream;
 import java.io.FileNotFoundException;
 import java.io.IOException;
-import java.util.ArrayList;
-import java.util.HashMap;
-import java.util.Iterator;
-import java.util.Map;
+import java.math.BigInteger;
+import java.nio.charset.StandardCharsets;
+import java.security.MessageDigest;
+import java.security.NoSuchAlgorithmException;
+import java.util.*;
 
 
 @RestController
 public class PlanServiceController {
 
+    private static final String SEP = "____";
+    private static final String TYPE = "objectType";
+    private static final String ID = "objectId";
+
     @Autowired
-    private RedisTemplate redisTemplate;
+    private RedisService redisService;
 
-    private String etagValue = "etag";
-
-    File schemaFile = new File("src\\main\\java\\com\\example\\demo\\controller\\JSONSchema.json");
+//    File schemaFile = new File("src\\main\\java\\com\\example\\demo\\controller\\JSONSchema.json");
+    File schemaFile = new File("/Users/yifanhe/IdeaProjects/SpringBootDemo/src/main/java/com/example/demo/controller/JSONSchema.json");
     JSONTokener schemaData;
     {
         try {
@@ -53,151 +55,166 @@ public class PlanServiceController {
     Schema schemaValidator = SchemaLoader.load(jsonSchema);
 
     @RequestMapping(value = "/plans", method = RequestMethod.POST)
-    public ResponseEntity<Object> createPlan(@RequestBody String data) {
-        JSONObject result = new JSONObject(data);
+    public ResponseEntity<Object> createPlan(@RequestBody String data) throws NoSuchAlgorithmException {
+        JSONObject object = new JSONObject(data.trim());
+
         try {
-            schemaValidator.validate(result);
+            schemaValidator.validate(object);
         } catch (ValidationException e) {
-            return new ResponseEntity<>(e.getMessage(), HttpStatus.CREATED);
+            return new ResponseEntity<>(e.getMessage(), HttpStatus.BAD_REQUEST);
         }
 
-        HashMap<String, Object> map = new HashMap<>();
-        ObjectMapper mapper = new ObjectMapper();
+        String key = object.getString(TYPE) + SEP + object.getString(ID);
+
+        if(redisService.exist(key))
+            return new ResponseEntity<>("{\"message\": \"A plan already exists with id " + object.getString(ID) +"\"}",HttpStatus.CONFLICT);
+
+        redisService.postPlan(object);
+        object = redisService.getPlan(key);
+//        redisService.enqueue(object.getString(ID), object, "post");
+
+
+        HttpHeaders resHeaders = new HttpHeaders();
+        resHeaders.setETag("\"" + getSHAString(object.toString()) + "\"");
+
+        return new ResponseEntity<>("{\"objectId\": \""+ object.getString(ID) + "\", \"objectType\": \"" + object.getString(TYPE) + "\", \"message\": \"Created Successfully\", }", resHeaders, HttpStatus.CREATED);
+    }
+
+    @RequestMapping(value = "plans/{type}/{id}")
+    public ResponseEntity<Object> getPlan(@PathVariable("type") String type, @PathVariable("id") String id, @RequestHeader HttpHeaders headers) {
+        String oldETag = headers.getFirst("If-None-Match");
+
+        JSONObject object = redisService.getPlan(type + SEP + id);
+        if (object.length() == 0)
+            return new ResponseEntity<>("{\"message\": \"No Data Found\"}", HttpStatus.NOT_FOUND); // 404
+        String plan = object.toString();
+
         try {
-            //Convert JSON to Map
-            map = mapper.readValue(result.toString(), HashMap.class);
-        } catch (JsonGenerationException e) {
-            e.printStackTrace();
-        } catch (JsonMappingException e) {
-            e.printStackTrace();
-        } catch (IOException e) {
-            e.printStackTrace();
-        }
+            String newETag = "\"" + getSHAString(plan) + "\"";
 
-//        HashMap<String, String> savedMap = new HashMap<>();
-//        for (Map.Entry<String, Object> entry : map.entrySet()) {
-//            if (entry.getValue().getClass() == HashMap.class) {
-//                HashMap<String, Object> newMap = (HashMap<String, Object>) entry.getValue();
-//                String index = newMap.get("objectId") + "_" + newMap.get("objectType") + "_" + entry.getKey();
-//                redisTemplate.opsForValue().set(index, newMap);
-////                savedMap.put("object", index + "_" + entry.getKey());
-//            } else if (entry.getValue().getClass() == String.class) {
-//                redisTemplate.opsForValue().set(entry.getKey(), entry.getValue());
-//            } else if (entry.getValue().getClass() == ArrayList.class) {
-//                ArrayList list = (ArrayList) entry.getValue();
-//                for (Object maps : list) {
-//                    HashMap<String, Object> listMap = (HashMap<String, Object>) maps;
-//                    for (Map.Entry<String, Object> listEntry : listMap.entrySet()) {
-//                        if (listEntry.getValue().getClass() == HashMap.class) {
-//                            HashMap<String, Object> newMap = (HashMap<String, Object>) listEntry.getValue();
-//                            String index = newMap.get("objectId") + "_" + newMap.get("objectType") + "_" + listEntry.getKey() + "_" + entry.getKey();
-//                            redisTemplate.opsForValue().set(index, newMap);
-//                        } else if (listEntry.getValue().getClass() == String.class) {
-//                            redisTemplate.opsForValue().set(listEntry.getKey(), listEntry.getValue());
-//                        }
-//                    }
-//                }
-//            }
-//        }
+            HttpHeaders resHeaders = new HttpHeaders();
+            resHeaders.setETag(newETag);
 
-        redisTemplate.opsForValue().set(result.getString("objectId"), map);
-        return new ResponseEntity<>("Plan created successfully", HttpStatus.CREATED);
-//        return ResponseEntity.ok().eTag(result.getString("objectId")).body("Plan created successfully");
-    }
-
-    @RequestMapping(value = "/plans/{id}")
-    public ResponseEntity<Object> getPlan(@PathVariable("id") String id, @RequestHeader("If-None-Match") String head) {
-        if (!redisTemplate.hasKey(id)) {
-            return new ResponseEntity<>("Plan not exist", HttpStatus.NOT_FOUND);
-        }
-        etagValue = (String) redisTemplate.opsForValue().get("etag");
-        if (head.equals(etagValue)) {
-//            return new ResponseEntity<>(redisTemplate.opsForValue().get(id), HttpStatus.OK);
-            return ResponseEntity.status(304).body("No Change");
-        } else {
-            etagValue = String.valueOf(redisTemplate.opsForValue().get(id).hashCode());
-            redisTemplate.opsForValue().set("etag", etagValue);
-            return ResponseEntity.ok().eTag(etagValue).body(redisTemplate.opsForValue().get(id));
+            if (oldETag == null || oldETag.length() == 0 || !oldETag.equals(newETag))
+                return new ResponseEntity<>(plan, resHeaders, HttpStatus.OK);
+            else
+                return new ResponseEntity<>("{\"objectId\": \""+ object.getString(ID) + "\", \"objectType\": \"" + object.getString(TYPE) + "\", \"message\": \"Not Modified\"}", resHeaders, HttpStatus.NOT_MODIFIED);
+        } catch (NoSuchAlgorithmException e) {
+            e.printStackTrace();
+            return new ResponseEntity<>("{\"message\": \""+ e.getMessage() + "\"}", HttpStatus.INTERNAL_SERVER_ERROR);
         }
     }
 
-    @RequestMapping(value = "/plans/{id}", method = RequestMethod.DELETE)
-    public ResponseEntity<Object> delete(@PathVariable("id") String id) {
-        if (redisTemplate.hasKey(id)) {
-            redisTemplate.delete(id);
-            return new ResponseEntity<>("Plan is deleted successfully", HttpStatus.OK);
-        } else {
-            return new ResponseEntity<>("Plan not exist", HttpStatus.NOT_FOUND);
-        }
+    @RequestMapping(value = "/plans/{type}/{id}", method = RequestMethod.DELETE)
+    public ResponseEntity<Object> delete(@PathVariable("type") String type, @PathVariable("id") String id) {
+//        redisService.enqueue(type + SEP + id);
+        JSONObject object = redisService.deletePlan(type + SEP + id);
+
+        if(object.length() == 0)
+            return new ResponseEntity<>("{\"message\": \"No Data Found\"}", HttpStatus.GONE); //410
+
+        return ResponseEntity.ok().body(object.toString()); //200
     }
 
-    @RequestMapping(value = "/plans/{id}", method = RequestMethod.PUT)
-    public ResponseEntity<Object> updatePlan(@PathVariable("id") String id, @RequestBody String data, @RequestHeader("If-Match") String head) {
-        if (!redisTemplate.hasKey(id)) {
-            return new ResponseEntity<>("Plan not exist", HttpStatus.NOT_FOUND);
-        }
-        etagValue = (String) redisTemplate.opsForValue().get("etag");
-        if (!head.equals(etagValue)) {
-            return ResponseEntity.status(412).body("Etag Not Match");
-        } else {
-            redisTemplate.delete(id);
+    @RequestMapping(value = "/plans/{type}/{id}", method = RequestMethod.PUT)
+    public ResponseEntity<Object> updatePlan(@PathVariable("type") String type, @PathVariable("id") String id, @RequestBody String data, @RequestHeader HttpHeaders headers) throws NoSuchAlgorithmException {
+        String oldETag = headers.getFirst("If-Match");
 
-            JSONObject result = new JSONObject(data);
+        try {
+            JSONObject newObject = new JSONObject(data.trim());
+            String key = type + SEP + id;
+            JSONObject object = redisService.getPlan(key);
+
+            if(object.length() == 0)
+                return new ResponseEntity<>("{\"message\": \"No Data Found\"}", HttpStatus.NOT_FOUND); // 404
+
+            HttpHeaders resHeaders = new HttpHeaders();
+
+            String newETag = "\"" + getSHAString(object.toString()) + "\"";
+
+            if(oldETag != null && !oldETag.equals(newETag))
+                return new ResponseEntity<>("{\"objectId\": \""+ object.getString(ID) + "\", \"objectType\": \"" + object.getString(TYPE) + "\", \"message\": \"The plan has been modified\", }", resHeaders, HttpStatus.PRECONDITION_FAILED);
+
+            JSONObject deletedObject = redisService.deletePlan(type + SEP + id);
+            if(deletedObject.length() == 0)
+                return new ResponseEntity<>("{\"message\": \"No Data Found\"}", HttpStatus.GONE); //410
+
             try {
-                schemaValidator.validate(result);
+                schemaValidator.validate(newObject);
             } catch (ValidationException e) {
-                return new ResponseEntity<>(e.getMessage(), HttpStatus.CREATED);
+                return new ResponseEntity<>(e.getMessage(), HttpStatus.BAD_REQUEST);
             }
-            HashMap<String, Object> map = new HashMap<>();
-            ObjectMapper mapper = new ObjectMapper();
-            try {
-                //Convert Map to JSON
-                map = mapper.readValue(result.toString(), HashMap.class);
-                System.out.println(map);
-            } catch (JsonGenerationException e) {
-                e.printStackTrace();
-            } catch (JsonMappingException e) {
-                e.printStackTrace();
-            } catch (IOException e) {
-                e.printStackTrace();
-            }
+            String newKey = newObject.getString(TYPE) + SEP + newObject.getString(ID);
 
-            redisTemplate.opsForValue().set(result.getString("objectId"), map);
-            return new ResponseEntity<>("Plan is updated successfully", HttpStatus.OK);
+            if(redisService.exist(newKey))
+                return new ResponseEntity<>("{\"message\": \"A plan already exists with id " + newObject.getString(ID) +"\"}",HttpStatus.CONFLICT);
 
+            redisService.postPlan(newObject);
+//        redisService.enqueue(object.getString(ID), object, "post");
+
+//            newObject = redisService.getPlan(key);
+            resHeaders.setETag("\"" + getSHAString(newObject.toString()) + "\"");
+
+            return new ResponseEntity<>("{\"objectId\": \""+ newObject.getString(ID) + "\", \"objectType\": \"" + newObject.getString(TYPE) + "\", \"message\": \"Created Successfully\", }", resHeaders, HttpStatus.CREATED);
+        }
+        catch(Exception e) {
+            e.printStackTrace();
+            return new ResponseEntity<>("{\"message\": \""+ e.getMessage() + "\"}", HttpStatus.BAD_REQUEST); //
         }
     }
 
-    @RequestMapping(value = "/plans/{id}", method = RequestMethod.PATCH)
-    public ResponseEntity<Object> updatePlanPartial(@PathVariable("id") String id, @RequestBody String data, @RequestHeader("If-Match") String head) {
-        if (!redisTemplate.hasKey(id)) {
-            return new ResponseEntity<>("Plan not exist", HttpStatus.NOT_FOUND);
+    @RequestMapping(value = "/plans/{type}/{id}", method = RequestMethod.PATCH)
+    public ResponseEntity<Object> updatePlanPartial(@PathVariable("type") String type, @PathVariable("id") String id, @RequestBody String data, @RequestHeader HttpHeaders headers) {
+        String oldETag = headers.getFirst("If-Match");
+
+        try {
+            JSONObject newObject = new JSONObject(data.trim());
+            String key = type + SEP + id;
+            JSONObject object = redisService.getPlan(key);
+
+            if (object.length() == 0)
+                return new ResponseEntity<>("{\"message\": \"No Data Found\"}", HttpStatus.NOT_FOUND); // 404
+
+            HttpHeaders resHeaders = new HttpHeaders();
+
+            String newETag = "\"" + getSHAString(object.toString()) + "\"";
+            resHeaders.setETag(newETag);
+
+            if (oldETag != null && !oldETag.equals(newETag))
+                return new ResponseEntity<>("{\"objectId\": \""+ object.getString(ID) + "\", \"objectType\": \"" + object.getString(TYPE) + "\", \"message\": \"The plan has been modified\", }", resHeaders, HttpStatus.PRECONDITION_FAILED);
+
+            redisService.patchPlan(key, newObject);
+//            redisService.enqueue(object.getString(ID), newObject, "patch");
+
+            newETag = "\"" + getSHAString(redisService.getPlan(key).toString()) + "\"";
+
+            resHeaders.setETag(newETag);
+//            return new ResponseEntity<>("{\"objectId\": \""+ object.getString(ID) + "\", \"objectType\": \"" + object.getString(TYPE) + "\", \"message\": \"Updated Successfully\", }", resHeaders, HttpStatus.OK);
+            return new ResponseEntity<>(redisService.getPlan(key).toString(), resHeaders, HttpStatus.OK);
         }
-        etagValue = (String) redisTemplate.opsForValue().get("etag");
-        if (!head.equals(etagValue)) {
-            return ResponseEntity.status(412).body("Etag Not Match");
-        } else {
-            HashMap<String, Object> plan, partialUpdate = new HashMap<>();
-            plan = (HashMap<String, Object>) redisTemplate.opsForValue().get(id);
-            ObjectMapper mapper = new ObjectMapper();
-            try {
-                partialUpdate = mapper.readValue(new JSONObject(data).toString(), HashMap.class);
-            } catch (IOException e) {
-                e.printStackTrace();
-            }
-            Iterator<Map.Entry<String, Object>> partialEntries = partialUpdate.entrySet().iterator();
-            while(partialEntries.hasNext()) {
-                Map.Entry<String, Object> partialEntry = partialEntries.next();
-                for (Map.Entry<String, Object> entry : plan.entrySet()) {
-                    if(partialEntry.getKey().equals(entry.getKey())) {
-                        plan.put(partialEntry.getKey(), partialEntry.getValue());
-                    }
-                }
-            }
-            redisTemplate.opsForValue().set(id, plan);
-            return new ResponseEntity<>("Plan is updated successfully", HttpStatus.OK);
+        catch (Exception e) {
+            e.printStackTrace();
+            return new ResponseEntity<>("{\"message\": \""+ e.getMessage() + "\"}", HttpStatus.BAD_REQUEST); //
         }
     }
+
+    // generate ETag using SHA256 Hash algorithm
+    private String getSHAString(String input) throws NoSuchAlgorithmException {
+        MessageDigest md = MessageDigest.getInstance("SHA-256");
+        byte[] hash = md.digest(input.getBytes(StandardCharsets.UTF_8));
+
+        BigInteger number = new BigInteger(1, hash);
+
+        StringBuilder hexString = new StringBuilder(number.toString(16));
+
+        while (hexString.length() < 32) {
+            hexString.insert(0, '0');
+        }
+
+        return hexString.toString();
+    }
+
+
 
     @Autowired
     private AuthenticationManager authenticationManager;
