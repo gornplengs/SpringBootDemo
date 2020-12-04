@@ -20,7 +20,6 @@ public class RedisDaoImpl implements RedisDao{
 
     @Autowired
     public RedisDaoImpl(RedisTemplate<String, Object> redisTemplate, ChannelTopic topic){
-        //TODO topic
         this.redisTemplate = redisTemplate;
         this.topic = topic;
     }

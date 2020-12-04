@@ -11,6 +11,7 @@ import org.everit.json.schema.loader.SchemaLoader;
 import org.json.JSONObject;
 import org.json.JSONTokener;
 import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.context.annotation.ComponentScan;
 import org.springframework.http.HttpHeaders;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
@@ -32,6 +33,7 @@ import java.util.*;
 
 
 @RestController
+@ComponentScan("com.example.demo")
 public class PlanServiceController {
 
     private static final String SEP = "____";
@@ -70,10 +72,9 @@ public class PlanServiceController {
             return new ResponseEntity<>("{\"message\": \"A plan already exists with id " + object.getString(ID) +"\"}",HttpStatus.CONFLICT);
 
         redisService.postPlan(object);
+        redisService.enqueue(object.getString(ID), object, "post");
+
         object = redisService.getPlan(key);
-//        redisService.enqueue(object.getString(ID), object, "post");
-
-
         HttpHeaders resHeaders = new HttpHeaders();
         resHeaders.setETag("\"" + getSHAString(object.toString()) + "\"");
 
@@ -107,7 +108,7 @@ public class PlanServiceController {
 
     @RequestMapping(value = "/plans/{type}/{id}", method = RequestMethod.DELETE)
     public ResponseEntity<Object> delete(@PathVariable("type") String type, @PathVariable("id") String id) {
-//        redisService.enqueue(type + SEP + id);
+        redisService.enqueue(type + SEP + id);
         JSONObject object = redisService.deletePlan(type + SEP + id);
 
         if(object.length() == 0)
@@ -184,7 +185,7 @@ public class PlanServiceController {
                 return new ResponseEntity<>("{\"objectId\": \""+ object.getString(ID) + "\", \"objectType\": \"" + object.getString(TYPE) + "\", \"message\": \"The plan has been modified\", }", resHeaders, HttpStatus.PRECONDITION_FAILED);
 
             redisService.patchPlan(key, newObject);
-//            redisService.enqueue(object.getString(ID), newObject, "patch");
+            redisService.enqueue(object.getString(ID), newObject, "patch");
 
             newETag = "\"" + getSHAString(redisService.getPlan(key).toString()) + "\"";
 
