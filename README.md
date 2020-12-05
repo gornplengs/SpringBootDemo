@@ -16,6 +16,6 @@ Adding Elasticsearch capabilities
 Adding Redis Queue for REST API queueing
 
 Tools
-1.Redis Cloud
-2.ElasticSearch 7.10.0
-3.Kibana 7.10.0
+1. Redis Cloud
+2. ElasticSearch 7.10.0
+3. Kibana 7.10.0
