@@ -41,7 +41,7 @@ public class RedisConfig {
     public RedisTemplate<String, Object> redisTemplate(
             RedisConnectionFactory redisConnectionFactory) {
 
-        Jackson2JsonRedisSerializer<Object> jackson2JsonRedisSerializer = new Jackson2JsonRedisSerializer<Object>(Object.class);
+//        Jackson2JsonRedisSerializer<Object> jackson2JsonRedisSerializer = new Jackson2JsonRedisSerializer<Object>(Object.class);
         StringRedisSerializer stringRedisSerializer = new StringRedisSerializer();
 
 //        ObjectMapper om = new ObjectMapper();
@@ -64,7 +64,7 @@ public class RedisConfig {
 
     @Bean
     @Autowired
-    RedisMessageListenerContainer redisContainer(RedisQueueReceiver receiver, RedisConnectionFactory redisConnectionFactory) {
+    RedisMessageListenerContainer redisContainer(RedisQueueReceiver receiver) {
         final RedisMessageListenerContainer container = new RedisMessageListenerContainer();
         container.setConnectionFactory(jedisConnectionFactory());
         container.addMessageListener(new MessageListenerAdapter(receiver), topic());

@@ -304,11 +304,13 @@ public class RedisServiceImpl implements RedisService {
         packet.put("request", "delete");
 
         for(String edgeKey: keys) {
-            Set subObjs = redisDao.findSet(edgeKey);
-            for(Object str: subObjs) {
-                String subKey = (String)str;
-                enqueue(subKey);
-            }
+            try {
+                Set subObjs = redisDao.findSet(edgeKey);
+                for(Object str: subObjs) {
+                    String subKey = (String)str;
+                    enqueue(subKey);
+                }
+            } catch (Exception e) {}
         }
         redisDao.enqueue(packet.toString());
     }
